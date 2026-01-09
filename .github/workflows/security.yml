@@ -58,7 +58,6 @@ jobs:
   container-scan:
     runs-on: ubuntu-latest
     needs: security-scan
-    if: hashFiles('Dockerfile') != ''
 
     steps:
       - name: Checkout code
