@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -29,12 +29,12 @@ jobs:
         run: npm audit --audit-level=moderate
         continue-on-error: true
 
-      - name: ESLint security rules
+      - name: ESLint security checks
         run: |
           npm install -g eslint eslint-plugin-security
           eslint . || true
 
-      - name: Run test suite
+      - name: Run application tests
         run: npm test
 
 
@@ -43,7 +43,7 @@ jobs:
     needs: security-scan
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Run Semgrep (SAST)
@@ -60,13 +60,20 @@ jobs:
     needs: security-scan
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check for Dockerfile
+        run: |
+          if [ ! -f Dockerfile ]; then
+            echo "No Dockerfile found. Skipping container scan."
+            exit 0
+          fi
 
       - name: Build Docker image
         run: docker build -t secure-web-app:test .
 
-      - name: Trivy container scan
+      - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: secure-web-app:test
