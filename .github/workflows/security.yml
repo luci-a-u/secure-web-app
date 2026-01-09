@@ -1,359 +1,74 @@
-# ===== .github/workflows/security.yml =====
-# Automated security checks in CI/CD pipeline
-
-name: Security Checks
+name: Security Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - develop
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   security-scan:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install dependencies
+        run: npm install
 
-    # Dependency vulnerability scanning
-    - name: Run npm audit
-      run: npm audit --audit-level=moderate
-      continue-on-error: true
+      - name: Dependency vulnerability scan (npm audit)
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
 
-    # Static code analysis for security issues
-    - name: Run ESLint security plugin
-      run: |
-        npm install -g eslint eslint-plugin-security
-        eslint --plugin security . || true
+      - name: ESLint security rules
+        run: |
+          npm install -g eslint eslint-plugin-security
+          eslint . || true
 
-    # Check for hardcoded secrets
-    - name: Secret scanning
-      uses: trufflesecurity/trufflehog@main
-      with:
-        path: ./
-        base: main
+      - name: Run test suite
+        run: npm test
 
-    # Run security tests
-    - name: Run security test suite
-      run: npm test
 
-    # OWASP Dependency Check
-    - name: OWASP Dependency Check
-      uses: dependency-check/Dependency-Check_Action@main
-      with:
-        project: 'secure-web-app'
-        path: '.'
-        format: 'HTML'
-
-    # Generate SBOM (Software Bill of Materials)
-    - name: Generate SBOM
-      run: |
-        npm install -g @cyclonedx/cyclonedx-npm
-        cyclonedx-npm --output-file sbom.json
-
-    # Upload security artifacts
-    - name: Upload security reports
-      uses: actions/upload-artifact@v3
-      if: always()
-      with:
-        name: security-reports
-        path: |
-          dependency-check-report.html
-          sbom.json
-
-  # SAST (Static Application Security Testing)
   sast:
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Run Semgrep
-      uses: returntocorp/semgrep-action@v1
-      with:
-        config: >-
-          p/security-audit
-          p/nodejs
-          p/owasp-top-ten
+    needs: security-scan
 
-  # Container scanning (if using Docker)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep (SAST)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: |
+            p/security-audit
+            p/nodejs
+            p/owasp-top-ten
+
+
   container-scan:
     runs-on: ubuntu-latest
+    needs: security-scan
+    if: hashFiles('Dockerfile') != ''
+
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Build Docker image
-      run: docker build -t secure-web-app:test .
-      if: hashFiles('Dockerfile') != ''
-    
-    - name: Run Trivy scanner
-      uses: aquasecurity/trivy-action@master
-      if: hashFiles('Dockerfile') != ''
-      with:
-        image-ref: 'secure-web-app:test'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-# ===== .eslintrc.json =====
-# ESLint configuration with security plugin
-{
-  "env": {
-    "node": true,
-    "es2021": true,
-    "jest": true
-  },
-  "extends": [
-    "eslint:recommended",
-    "plugin:security/recommended"
-  ],
-  "plugins": ["security"],
-  "rules": {
-    "security/detect-object-injection": "warn",
-    "security/detect-non-literal-regexp": "warn",
-    "security/detect-unsafe-regex": "error",
-    "security/detect-buffer-noassert": "error",
-    "security/detect-child-process": "warn",
-    "security/detect-disable-mustache-escape": "error",
-    "security/detect-eval-with-expression": "error",
-    "security/detect-no-csrf-before-method-override": "error",
-    "security/detect-non-literal-fs-filename": "warn",
-    "security/detect-non-literal-require": "warn",
-    "security/detect-possible-timing-attacks": "error",
-    "security/detect-pseudoRandomBytes": "error",
-    "no-eval": "error",
-    "no-implied-eval": "error",
-    "no-new-func": "error"
-  }
-}
+      - name: Build Docker image
+        run: docker build -t secure-web-app:test .
 
-# ===== .env.example =====
-# Environment variables template
-# Copy to .env and fill in your values
-
-NODE_ENV=development
-PORT=3000
-
-# SECURITY: Generate strong random secrets in production
-# Use: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-JWT_REFRESH_SECRET=your-super-secret-refresh-key-different-from-jwt
-
-# Logging
-LOG_LEVEL=info
-
-# Database (if using PostgreSQL instead of SQLite)
-# DATABASE_URL=postgresql://user:password@localhost:5432/secure_app
-
-# ===== scripts/init-db.js =====
-// Database initialization script
-
-const sqlite3 = require('sqlite3').verbose();
-const crypto = require('crypto');
-const bcrypt = require('bcrypt');
-
-const db = new sqlite3.Database('./secure_app.db');
-
-console.log('🔧 Initializing database...');
-
-db.serialize(async () => {
-  // Create tables (already in server.js, but good to have standalone)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT DEFAULT 'user' CHECK(role IN ('admin', 'user', 'guest')),
-      name TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS refresh_tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      token_hash TEXT UNIQUE NOT NULL,
-      expires_at DATETIME NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      action TEXT NOT NULL,
-      resource TEXT,
-      ip_address TEXT,
-      user_agent TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      details TEXT
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS user_data (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      content TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
-
-  // Create default admin user (only for development)
-  const adminPassword = await bcrypt.hash('Admin123!', 12);
-  
-  db.run(
-    `INSERT OR IGNORE INTO users (email, password_hash, role, name) 
-     VALUES (?, ?, 'admin', 'Admin User')`,
-    ['admin@example.com', adminPassword],
-    function(err) {
-      if (err) {
-        console.error('Error creating admin user:', err);
-      } else if (this.changes > 0) {
-        console.log('✅ Admin user created: admin@example.com / Admin123!');
-        console.log('⚠️  SECURITY: Change this password immediately in production!');
-      }
-    }
-  );
-
-  console.log('✅ Database initialized successfully');
-  console.log('📊 Tables created: users, refresh_tokens, audit_logs, user_data');
-  
-  db.close();
-});
-
-# ===== scripts/attack-test.sh =====
-#!/bin/bash
-# Manual attack testing script
-
-echo "🔒 Security Attack Testing Script"
-echo "=================================="
-echo ""
-
-BASE_URL="http://localhost:3000"
-
-echo "1. Testing SQL Injection..."
-curl -X POST $BASE_URL/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@test.com OR 1=1--","password":"test"}' \
-  -w "\nStatus: %{http_code}\n\n"
-
-echo "2. Testing XSS in registration..."
-curl -X POST $BASE_URL/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"xss@test.com","password":"Test123Pass","name":"<script>alert(1)</script>"}' \
-  -w "\nStatus: %{http_code}\n\n"
-
-echo "3. Testing rate limiting (will send 10 failed login attempts)..."
-for i in {1..10}; do
-  curl -X POST $BASE_URL/api/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{"email":"ratelimit@test.com","password":"wrong"}' \
-    -s -o /dev/null -w "Attempt $i: %{http_code}\n"
-  sleep 0.1
-done
-echo ""
-
-echo "4. Testing unauthorized admin access..."
-curl -X GET $BASE_URL/api/admin/users \
-  -H "Authorization: Bearer fake.jwt.token" \
-  -w "\nStatus: %{http_code}\n\n"
-
-echo "5. Testing CSRF (no token)..."
-curl -X PUT $BASE_URL/api/profile \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Hacker"}' \
-  -w "\nStatus: %{http_code}\n\n"
-
-echo "6. Testing oversized payload..."
-LARGE_PAYLOAD=$(python3 -c "print('a' * 100000)")
-curl -X POST $BASE_URL/api/data \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer fake.token" \
-  -d "{\"content\":\"$LARGE_PAYLOAD\"}" \
-  -w "\nStatus: %{http_code}\n\n"
-
-echo "=================================="
-echo "✅ Attack testing complete"
-echo "Check the logs for security events"
-
-# ===== docker-compose.yml =====
-# Optional: Production-like deployment with PostgreSQL
-
-version: '3.8'
-
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - JWT_SECRET=${JWT_SECRET}
-      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
-      - DATABASE_URL=postgresql://postgres:password@db:5432/secure_app
-    depends_on:
-      - db
-    restart: unless-stopped
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_DB=secure_app
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=password
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-  # Optional: Redis for distributed rate limiting
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-
-# ===== Dockerfile =====
-# Production-ready container
-
-FROM node:18-alpine
-
-# Security: Run as non-root user
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
-
-WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
-
-# Copy application files
-COPY --chown=nodejs:nodejs . .
-
-# Switch to non-root user
-USER nodejs
-
-# Expose port
-EXPOSE 3000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-
-CMD ["node", "server.js"]
+      - name: Trivy container scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secure-web-app:test
+          format: table
